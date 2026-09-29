@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Paradigma de Realidad Extendida (XR)</title>
+<meta name="description" content="Espectro de la realidad extendida: real, aumentada, mixta y virtual">
+<meta name="theme-color" content="#000000">
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#000;font-family:'Segoe UI',system-ui,sans-serif;color:#fff}
+  canvas{position:fixed;inset:0;width:100%;height:100%;touch-action:none}
+  video{display:none}
+  .glass{background:rgba(10,15,30,.62);backdrop-filter:blur(6px);border-radius:14px}
+  #top{position:fixed;top:max(10px,env(safe-area-inset-top));left:10px;right:10px;display:flex;flex-direction:column;gap:6px;align-items:center}
+  #modes{display:flex;gap:6px;padding:6px}
+  #modes button{font:inherit;font-weight:700;font-size:.85rem;padding:8px 14px;border-radius:12px;border:2px solid transparent;background:rgba(255,255,255,.12);color:#fff}
+  #modes button.on{border-color:#38bdf8;background:rgba(56,189,248,.28)}
+  #badges{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;font-size:.72rem}
+  #badges span{padding:4px 9px;border-radius:10px}
+  #card{position:fixed;left:10px;right:10px;bottom:max(10px,env(safe-area-inset-bottom));max-width:520px;margin:0 auto;padding:12px 14px;font-size:.85rem}
+  #card h3{margin:0 0 6px;color:#38bdf8;font-size:1.05rem}
+  #card p{margin:3px 0;color:#e2e8f0}
+  #card b{color:#fff}
+  .bar{height:8px;border-radius:4px;background:rgba(255,255,255,.2);margin:6px 0 2px;overflow:hidden}
+  .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#34d399,#38bdf8,#a78bfa);transition:width .4s}
+  #vrbtn,#exit{position:fixed;right:14px;bottom:170px;font:inherit;font-weight:700;padding:10px 16px;border-radius:14px;border:0;background:#a78bfa;color:#0b1020;display:none}
+  #exit{right:auto;left:50%;transform:translateX(-50%);bottom:14px;background:rgba(255,255,255,.85)}
+  #intro{position:fixed;inset:0;background:rgba(5,8,20,.93);display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box}
+  #intro div{max-width:440px;text-align:center}
+  #intro h1{font-size:1.4rem;color:#38bdf8;margin:0 0 10px}
+  #intro p{color:#cbd5e1;font-size:.9rem;line-height:1.45}
+  #intro ul{text-align:left;color:#cbd5e1;font-size:.85rem;padding-left:20px}
+  #go{font:inherit;font-weight:700;font-size:1rem;padding:13px 26px;border-radius:24px;border:0;background:linear-gradient(135deg,#38bdf8,#818cf8);color:#0b1020;margin-top:8px}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<video id="vid" playsinline muted></video>
+<div id="top">
+  <div id="modes" class="glass">
+    <button data-m="real">Real</button><button data-m="ra" class="on">RA</button><button data-m="rm">RM</button><button data-m="rv">RV</button>
+  </div>
+  <div id="badges"><span id="bcam" class="glass"></span><span id="bgyro" class="glass"></span></div>
+</div>
+<div id="card" class="glass">
+  <h3 id="cn"></h3>
+  <p><b>Entorno:</b> <span id="ce"></span></p>
+  <p><b>Interacción:</b> <span id="ci"></span></p>
+  <div class="bar"><i id="cb"></i></div><small>Nivel de inmersión</small>
+</div>
+<button id="vrbtn">Gafas VR (2 ojos)</button>
+<button id="exit">Salir de gafas VR</button>
+<div id="intro"><div>
+  <h1>Paradigma de Realidad Extendida (XR)</h1>
+  <p>XR agrupa las tecnologías que combinan o amplían la realidad. Recorre el espectro con los botones de arriba:</p>
+  <ul><li><b>Real:</b> solo el entorno físico</li><li><b>RA:</b> real + información virtual</li><li><b>RM:</b> real + objetos virtuales integrados</li><li><b>RV:</b> entorno totalmente virtual</li></ul>
+  <p>Usa la <b>cámara</b> y el <b>giroscopio</b>. Acepta los permisos cuando el navegador los pida. Mueve el dispositivo para mirar alrededor (en PC, arrastra).</p>
+  <button id="go">Iniciar experiencia</button>
+</div></div>
+<script>
+const $=id=>document.getElementById(id),cv=$('cv'),ctx=cv.getContext('2d'),vid=$('vid');
+const MODES={
+ real:{n:'Realidad real',e:'Solo el entorno físico (cámara)',i:'Solo observas; no hay elementos virtuales',m:8},
+ ra:{n:'Realidad aumentada (RA)',e:'Entorno real + información virtual superpuesta',i:'Mira alrededor y toca los objetos para cambiarlos',m:35},
+ rm:{n:'Realidad mixta (RM)',e:'Entorno real + objetos virtuales integrados al espacio',i:'Toca el suelo para colocar cubos anclados; toca los objetos',m:65},
+ rv:{n:'Realidad virtual (RV)',e:'Entorno 100% virtual, sin mundo real',i:'Mira alrededor, toca objetos y activa las gafas VR',m:100}};
+const LBL=['Objeto virtual','Anclado al mundo real','Toca para cambiarme','Información superpuesta'];
+const S={mode:'ra',yaw:0,pitch:0,a:0,b:0,g:0,a0:null,gyro:false,cam:'off',stream:null,stereo:false,R:[1,0,0,0,1,0,0,0,1],placed:[],P:null};
+let W,H,dpr,T=0;
+function fit(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;cv.width=W*dpr;cv.height=H*dpr}
+addEventListener('resize',fit);fit();
+const OBJ=[];for(let i=0;i<12;i++){const az=(i*30-15)*Math.PI/180,d=3.5+(i%3)*1.2;
+  OBJ.push({p:[d*Math.sin(az),-.4+((i*7)%5)*.5,-d*Math.cos(az)],t:['cube','orb','ring'][i%3],s:.35+(i%2)*.15,h:i*30,ph:i,spin:0,pulse:0,lbl:LBL[i%4]})}
+const SUN={p:[0,4,-25],t:'orb',s:3,h:45,ph:0,spin:0,pulse:0};
+const STARS=[];for(let i=0;i<140;i++){const a=Math.random()*6.283,e=Math.random()*1.4+.05,r=60;STARS.push([r*Math.cos(e)*Math.sin(a),r*Math.sin(e),-r*Math.cos(e)*Math.cos(a)])}
+const mul=(A,B)=>{const C=[];for(let i=0;i<3;i++)for(let j=0;j<3;j++)C.push(A[i*3]*B[j]+A[i*3+1]*B[3+j]+A[i*3+2]*B[6+j]);return C};
+const Rx=a=>[1,0,0,0,Math.cos(a),-Math.sin(a),0,Math.sin(a),Math.cos(a)];
+const Ry=a=>[Math.cos(a),0,Math.sin(a),0,1,0,-Math.sin(a),0,Math.cos(a)];
+const Rz=a=>[Math.cos(a),-Math.sin(a),0,Math.sin(a),Math.cos(a),0,0,0,1];
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function updR(){const d=Math.PI/180;
+  if(S.gyro){let R=mul(mul(Ry((S.a-S.a0)*d+S.yaw),Rx(S.b*d)),Rz(-S.g*d));R=mul(R,Rx(-Math.PI/2));
+    const o=(screen.orientation?screen.orientation.angle:window.orientation||0)*d;S.R=mul(R,Rz(-o))}
+  else S.R=mul(Ry(S.yaw),Rx(S.pitch))}
+function pj(p,P){const R=S.R,dx=p[0]-P.cp[0],dy=p[1]-P.cp[1],dz=p[2]-P.cp[2],
+  x=R[0]*dx+R[3]*dy+R[6]*dz,y=R[1]*dx+R[4]*dy+R[7]*dz,d=-(R[2]*dx+R[5]*dy+R[8]*dz);
+  return d>.1?{x:P.cx+P.f*x/d,y:P.cy-P.f*y/d,d}:null}
+function horizon(P,night){const R=S.R,roll=Math.asin(clamp(R[3],-1,1)),el=Math.asin(clamp(-R[5],-1,1)),hy=clamp(P.f*Math.tan(el),-4000,4000);
+  ctx.save();ctx.translate(P.cx,P.cy);ctx.rotate(roll);
+  let s=ctx.createLinearGradient(0,hy-900,0,hy);s.addColorStop(0,night?'#1b1464':'#7fb8e6');s.addColorStop(1,night?'#ff8a5c':'#dbeaf5');
+  ctx.fillStyle=s;ctx.fillRect(-4000,hy-4000,8000,4000);
+  let g=ctx.createLinearGradient(0,hy,0,hy+700);g.addColorStop(0,night?'#1a1230':'#8b8f94');g.addColorStop(1,night?'#07050f':'#55585d');
+  ctx.fillStyle=g;ctx.fillRect(-4000,hy,8000,4000);ctx.restore()}
+function video(){if(!vid.videoWidth)return;const k=Math.max(W/vid.videoWidth,H/vid.videoHeight),w=vid.videoWidth*k,h=vid.videoHeight*k;ctx.drawImage(vid,(W-w)/2,(H-h)/2,w,h)}
+function grid(P){ctx.lineWidth=1;const y=-1.6;for(let i=-10;i<=10;i++)for(let j=-10;j<10;j++)for(let k=0;k<2;k++){
+  const a=pj(k?[j,y,i]:[i,y,j],P),b=pj(k?[j+1,y,i]:[i,y,j+1],P);if(!a||!b)continue;
+  const al=Math.max(0,1-a.d/12)*.55;if(al<.02)continue;ctx.strokeStyle=`rgba(120,220,255,${al})`;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke()}}
+const FC=[[0,2,6,4],[1,3,7,5],[0,1,5,4],[2,3,7,6],[0,1,3,2],[4,5,7,6]];
+function cube(o,P){const s=o.s*(1+o.pulse*.3),ry=T*.0006*(1+o.spin*6)+o.ph,c1=Math.cos(ry),s1=Math.sin(ry),c2=Math.cos(.5),s2=Math.sin(.5),V=[];
+  for(let i=0;i<8;i++){const x=(i&1?1:-1)*s,y=(i&2?1:-1)*s,z=(i&4?1:-1)*s,x1=x*c1+z*s1,z1=-x*s1+z*c1,y1=y*c2-z1*s2,z2=y*s2+z1*c2;V.push([o.p[0]+x1,o.p[1]+y1,o.p[2]+z2])}
+  for(const f of FC){const c=[0,1,2].map(k=>(V[f[0]][k]+V[f[1]][k]+V[f[2]][k]+V[f[3]][k])/4),n=[c[0]-o.p[0],c[1]-o.p[1],c[2]-o.p[2]],v=[c[0]-P.cp[0],c[1]-P.cp[1],c[2]-P.cp[2]];
+    if(n[0]*v[0]+n[1]*v[1]+n[2]*v[2]>=0)continue;const nl=Math.hypot(...n),l=.4+.55*Math.max(0,(n[0]*.4+n[1]*.8+n[2]*.45)/nl/.98),pts=f.map(i=>pj(V[i],P));
+    if(pts.some(p=>!p))continue;ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();
+    ctx.fillStyle=`hsla(${o.h},75%,${l*68}%,.88)`;ctx.fill();ctx.strokeStyle='rgba(255,255,255,.75)';ctx.lineWidth=1.5;ctx.stroke()}}
+function orb(o,P){const p=pj(o.p,P);if(!p)return;const r=P.f*o.s*(1+o.pulse*.3)/p.d,g=ctx.createRadialGradient(p.x-r*.3,p.y-r*.3,r*.1,p.x,p.y,r);
+  g.addColorStop(0,`hsl(${o.h} 90% 80%)`);g.addColorStop(1,`hsl(${o.h+30} 80% 42%)`);ctx.fillStyle=g;ctx.beginPath();ctx.arc(p.x,p.y,r,0,7);ctx.fill()}
+function ring(o,P){const tt=T*.001*(1+o.spin*6)+o.ph,r=o.s*1.4;ctx.beginPath();let ok=true;
+  for(let i=0;i<=28;i++){const th=i/28*6.283,x=Math.cos(th)*r,z0=Math.sin(th)*r,p=pj([o.p[0]+x,o.p[1]+z0*Math.sin(tt),o.p[2]+z0*Math.cos(tt)],P);if(!p){ok=false;break}i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y)}
+  if(ok){ctx.strokeStyle=`hsl(${o.h} 90% 68%)`;ctx.lineWidth=4;ctx.stroke()}}
+function tag(o,P){const p=pj([o.p[0],o.p[1]+o.s*1.7,o.p[2]],P);if(!p||p.d>9)return;ctx.font='600 12px Segoe UI,sans-serif';const w=ctx.measureText(o.lbl).width+16;
+  ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(p.x,p.y+22);ctx.lineTo(p.x,p.y+8);ctx.stroke();
+  ctx.fillStyle='rgba(10,15,30,.75)';ctx.beginPath();ctx.roundRect?ctx.roundRect(p.x-w/2,p.y-12,w,22,8):ctx.rect(p.x-w/2,p.y-12,w,22);ctx.fill();ctx.fillStyle='#fff';ctx.textAlign='center';ctx.fillText(o.lbl,p.x,p.y+3)}
+function scene(P){const m=S.mode,camMode=m!=='rv';
+  if(camMode){if(S.cam==='on'&&!S.stereo)video();else horizon(P,false)}else{horizon(P,true);ctx.fillStyle='rgba(255,255,255,.85)';STARS.forEach(s=>{const p=pj(s,P);if(p)ctx.fillRect(p.x,p.y,1.6,1.6)})}
+  if(m==='real'){ctx.strokeStyle='rgba(255,255,255,.6)';ctx.lineWidth=2;ctx.beginPath();ctx.arc(P.cx,P.cy,18,0,7);ctx.moveTo(P.cx-28,P.cy);ctx.lineTo(P.cx+28,P.cy);ctx.moveTo(P.cx,P.cy-28);ctx.lineTo(P.cx,P.cy+28);ctx.stroke();return}
+  if(m!=='ra')grid(P);
+  const L=OBJ.concat(m==='rm'?S.placed:[],m==='rv'?[SUN]:[]).map(o=>({o,p:pj(o.p,P)})).filter(x=>x.p).sort((a,b)=>b.p.d-a.p.d);
+  if(m!=='ra')L.forEach(({o,p})=>{if(o.p[1]<=-1.55)return;const q=pj([o.p[0],-1.6,o.p[2]],P);if(!q)return;const r=P.f*o.s*1.1/q.d;ctx.fillStyle='rgba(0,0,0,.3)';ctx.beginPath();ctx.ellipse(q.x,q.y,r,r*.3,0,0,7);ctx.fill()});
+  L.forEach(({o})=>o.t==='cube'?cube(o,P):o.t==='orb'?orb(o,P):ring(o,P));
+  if(m==='ra'||m==='rm')L.forEach(({o})=>o.lbl&&tag(o,P))}
+function frame(t){T=t;updR();ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+  OBJ.concat(S.placed).forEach(o=>{o.spin*=.96;o.pulse*=.9});
+  if(S.stereo&&S.mode==='rv'){const R=S.R;for(const e of[-1,1]){const x0=e<0?0:W/2;ctx.save();ctx.beginPath();ctx.rect(x0,0,W/2,H);ctx.clip();
+    scene({cx:x0+W/4,cy:H/2,f:H*.8,cp:[R[0]*e*.07,R[3]*e*.07,R[6]*e*.07]});ctx.restore()}
+    ctx.fillStyle='#000';ctx.fillRect(W/2-1,0,2,H)}
+  else{S.P={cx:W/2,cy:H/2,f:Math.max(W,H)*.8,cp:[0,0,0]};scene(S.P)}
+  requestAnimationFrame(frame)}
+function hud(){const m=MODES[S.mode];$('cn').textContent=m.n;$('ce').textContent=m.e;$('ci').textContent=m.i;$('cb').style.width=m.m+'%';
+  $('bcam').textContent=S.cam==='on'?'Cámara: activa':S.cam==='error'?'Cámara: sin permiso o no disponible':'Cámara: apagada';
+  $('bgyro').textContent=S.gyro?'Giroscopio: activo':'Giroscopio: no detectado (arrastra para mirar)';
+  document.querySelectorAll('#modes button').forEach(b=>b.classList.toggle('on',b.dataset.m===S.mode));
+  $('vrbtn').style.display=S.mode==='rv'&&!S.stereo?'block':'none';$('exit').style.display=S.stereo?'block':'none';
+  $('top').style.display=$('card').style.display=S.stereo?'none':'';}
+async function setCam(on){if(on){if(S.stream)return;try{S.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});vid.srcObject=S.stream;await vid.play();S.cam='on'}catch(e){S.cam='error'}}
+  else{if(S.stream){S.stream.getTracks().forEach(t=>t.stop());S.stream=null}S.cam='off'}hud()}
+function setMode(m){S.mode=m;S.stereo=false;setCam(m!=='rv');hud()}
+document.querySelectorAll('#modes button').forEach(b=>b.onclick=()=>setMode(b.dataset.m));
+$('vrbtn').onclick=()=>{S.stereo=true;hud()};$('exit').onclick=()=>{S.stereo=false;hud()};
+function onOri(e){if(e.alpha==null&&e.beta==null)return;if(S.a0==null)S.a0=e.alpha||0;S.a=e.alpha||0;S.b=e.beta||0;S.g=e.gamma||0;if(!S.gyro){S.gyro=true;hud()}}
+$('go').onclick=async()=>{try{if(window.DeviceOrientationEvent&&DeviceOrientationEvent.requestPermission)await DeviceOrientationEvent.requestPermission()}catch(e){}
+  addEventListener('deviceorientation',onOri);$('intro').style.display='none';setMode('ra')};
+let dn=null;
+cv.addEventListener('pointerdown',e=>{dn={x:e.clientX,y:e.clientY,t:performance.now(),lx:e.clientX,ly:e.clientY,mv:0};cv.setPointerCapture(e.pointerId)});
+cv.addEventListener('pointermove',e=>{if(!dn)return;const dx=e.clientX-dn.lx,dy=e.clientY-dn.ly;dn.lx=e.clientX;dn.ly=e.clientY;dn.mv+=Math.abs(dx)+Math.abs(dy);
+  S.yaw+=dx*.005;if(!S.gyro)S.pitch=clamp(S.pitch+dy*.005,-1.4,1.4)});
+cv.addEventListener('pointerup',e=>{if(dn&&dn.mv<10&&performance.now()-dn.t<500&&!S.stereo)tap(e.clientX,e.clientY);dn=null});
+function tap(x,y){const P=S.P,m=S.mode;if(m==='real'||!P)return;let best=null,bd=1e9;
+  OBJ.concat(m==='rm'?S.placed:[]).forEach(o=>{const p=pj(o.p,P);if(!p)return;const d=Math.hypot(p.x-x,p.y-y),r=P.f*o.s/p.d*1.4+14;if(d<r&&d<bd){bd=d;best=o}});
+  if(best){best.h=(best.h+60)%360;best.spin=1;best.pulse=1;return}
+  if(m==='rm'){const R=S.R,vx=(x-P.cx)/P.f,vy=-(y-P.cy)/P.f,wx=R[0]*vx+R[1]*vy-R[2],wy=R[3]*vx+R[4]*vy-R[5],wz=R[6]*vx+R[7]*vy-R[8];
+    if(wy<-.02){const t=-1.6/wy;if(t<14){S.placed.push({p:[t*wx,-1.25,t*wz],t:'cube',s:.35,h:Math.random()*360,ph:Math.random()*6,spin:1,pulse:1});if(S.placed.length>30)S.placed.shift()}}}}
+hud();requestAnimationFrame(frame);
+</script>
+</body>
+</html>
